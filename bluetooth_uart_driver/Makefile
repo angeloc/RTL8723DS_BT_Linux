@@ -11,7 +11,10 @@ else
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
+install:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
+
 clean:
-	rm -rf *.o *.mod.c *.mod.o *.ko *.symvers *.order *.a
+	rm -rf *.o *.mod.c *.mod.o *.ko *.symvers *.order *.a *.o.cmd
 
 endif

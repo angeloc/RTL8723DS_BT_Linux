@@ -44,9 +44,9 @@ static struct rtl_coex_struct btrtl_coex;
 #define is_profile_busy(profile)        ((btrtl_coex.profile_status & BIT(profile)) > 0)
 
 static void rtk_handle_event_from_wifi(uint8_t * msg);
-static void count_a2dp_packet_timeout(unsigned long data);
-static void count_pan_packet_timeout(unsigned long data);
-static void count_hogp_packet_timeout(unsigned long data);
+static void count_a2dp_packet_timeout(struct timer_list *t);
+static void count_pan_packet_timeout(struct timer_list *t);
+static void count_hogp_packet_timeout(struct timer_list *t);
 
 static int rtl_alloc_buff(struct rtl_coex_struct *coex)
 {
@@ -537,11 +537,11 @@ static void rtk_notify_profileinfo_to_fw(void)
 	return;
 }
 
-static void rtk_check_setup_timer(int8_t profile_index)
+static void rtk_check_timer_setup(int8_t profile_index)
 {
 	if (profile_index == profile_a2dp) {
 		btrtl_coex.a2dp_packet_count = 0;
-		setup_timer(&(btrtl_coex.a2dp_count_timer),
+		timer_setup(&(btrtl_coex.a2dp_count_timer),
 			    count_a2dp_packet_timeout, 0);
 		btrtl_coex.a2dp_count_timer.expires =
 		    jiffies + msecs_to_jiffies(1000);
@@ -550,7 +550,7 @@ static void rtk_check_setup_timer(int8_t profile_index)
 
 	if (profile_index == profile_pan) {
 		btrtl_coex.pan_packet_count = 0;
-		setup_timer(&(btrtl_coex.pan_count_timer),
+		timer_setup(&(btrtl_coex.pan_count_timer),
 			    count_pan_packet_timeout, 0);
 		btrtl_coex.pan_count_timer.expires =
 		    jiffies + msecs_to_jiffies(1000);
@@ -563,7 +563,7 @@ static void rtk_check_setup_timer(int8_t profile_index)
 		    && (0 == btrtl_coex.profile_refcount[profile_voice])) {
 			btrtl_coex.hogp_packet_count = 0;
 			btrtl_coex.voice_packet_count = 0;
-			setup_timer(&(btrtl_coex.hogp_count_timer),
+			timer_setup(&(btrtl_coex.hogp_count_timer),
 				    count_hogp_packet_timeout, 0);
 			btrtl_coex.hogp_count_timer.expires =
 			    jiffies + msecs_to_jiffies(1000);
@@ -648,7 +648,7 @@ static void update_profile_connection(rtk_conn_prof * phci_conn,
 				btrtl_coex.profile_status |=
 				    BIT(profile_index);
 
-			rtk_check_setup_timer(profile_index);
+			rtk_check_timer_setup(profile_index);
 		}
 		btrtl_coex.profile_refcount[profile_index]++;
 
@@ -944,7 +944,7 @@ static void packets_count(uint16_t handle, uint16_t scid, uint16_t length,
 	}
 }
 
-static void count_a2dp_packet_timeout(unsigned long data)
+static void count_a2dp_packet_timeout(struct timer_list *t)
 {
 	RTKBT_DBG("%s: a2dp_packet_count %d", __func__,
 			btrtl_coex.a2dp_packet_count);
@@ -959,7 +959,7 @@ static void count_a2dp_packet_timeout(unsigned long data)
 		  jiffies + msecs_to_jiffies(1000));
 }
 
-static void count_pan_packet_timeout(unsigned long data)
+static void count_pan_packet_timeout(struct timer_list *t)
 {
 	RTKBT_DBG("%s: pan_packet_count %d", __func__,
 			btrtl_coex.pan_packet_count);
@@ -979,7 +979,7 @@ static void count_pan_packet_timeout(unsigned long data)
 		  jiffies + msecs_to_jiffies(1000));
 }
 
-static void count_hogp_packet_timeout(unsigned long data)
+static void count_hogp_packet_timeout(struct timer_list *t)
 {
 	RTKBT_DBG("%s: hogp_packet_count %d", __func__,
 			btrtl_coex.hogp_packet_count);
@@ -1008,7 +1008,6 @@ static int udpsocket_send(char *tx_msg, int msg_size)
 {
 	u8 error = 0;
 	struct msghdr udpmsg;
-	mm_segment_t oldfs;
 	struct iovec iov;
 
 	RTKBT_DBG("send msg %s with len:%d", tx_msg, msg_size);
@@ -1027,14 +1026,12 @@ static int udpsocket_send(char *tx_msg, int msg_size)
 		udpmsg.msg_control = NULL;
 		udpmsg.msg_controllen = 0;
 		udpmsg.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
-		oldfs = get_fs();
-		set_fs(KERNEL_DS);
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0)
 		error = sock_sendmsg(btrtl_coex.udpsock, &udpmsg, msg_size);
 #else
 		error = sock_sendmsg(btrtl_coex.udpsock, &udpmsg);
 #endif
-		set_fs(oldfs);
 
 		if (error < 0)
 			RTKBT_DBG("Error when sendimg msg, error:%d", error);
@@ -2228,66 +2225,9 @@ void rtk_btcoex_parse_l2cap_data_rx(uint8_t *buffer, int count)
 	}
 
 	rtl_l2_data_process(buffer, count, 0);
-	//u16 handle, total_len, pdu_len, channel_ID, command_len, psm, scid,
-	//    dcid, result, status;
-	//u8 flag, code, identifier;
-	//u8 *pp = urb->transfer_buffer;
-	//STREAM_TO_UINT16(handle, pp);
-	//flag = handle >> 12;
-	//handle = handle & 0x0FFF;
-	//STREAM_TO_UINT16(total_len, pp);
-	//STREAM_TO_UINT16(pdu_len, pp);
-	//STREAM_TO_UINT16(channel_ID, pp);
-
-	//if (channel_ID == 0x0001) {
-	//	code = *pp++;
-	//	switch (code) {
-	//	case L2CAP_CONN_REQ:
-	//		identifier = *pp++;
-	//		STREAM_TO_UINT16(command_len, pp);
-	//		STREAM_TO_UINT16(psm, pp);
-	//		STREAM_TO_UINT16(scid, pp);
-	//		RTKBT_DBG("RX l2cap conn req, hndl %x, PSM %x, scid %x",
-	//			  handle, psm, scid);
-	//		handle_l2cap_con_req(handle, psm, scid, 0);
-	//		break;
-
-	//	case L2CAP_CONN_RSP:
-	//		identifier = *pp++;
-	//		STREAM_TO_UINT16(command_len, pp);
-	//		STREAM_TO_UINT16(dcid, pp);
-	//		STREAM_TO_UINT16(scid, pp);
-	//		STREAM_TO_UINT16(result, pp);
-	//		STREAM_TO_UINT16(status, pp);
-	//		RTKBT_DBG("RX l2cap conn rsp, hndl %x, dcid %x, "
-	//			  "scid %x, result %x",
-	//			  handle, dcid, scid, result);
-	//		handle_l2cap_con_rsp(handle, dcid, scid, 0, result);
-	//		break;
-
-	//	case L2CAP_DISCONN_REQ:
-	//		identifier = *pp++;
-	//		STREAM_TO_UINT16(command_len, pp);
-	//		STREAM_TO_UINT16(dcid, pp);
-	//		STREAM_TO_UINT16(scid, pp);
-	//		RTKBT_DBG("RX l2cap disconn req, hndl %x, dcid %x, "
-	//			  "scid %x", handle, dcid, scid);
-	//		handle_l2cap_discon_req(handle, dcid, scid, 0);
-	//		break;
-
-	//	case L2CAP_DISCONN_RSP:
-	//		break;
-
-	//	default:
-	//		break;
-	//	}
-	//} else {
-	//	if ((flag != 0x01) && (is_profile_connected(profile_a2dp) || is_profile_connected(profile_pan)))	//Do not count the continuous packets
-	//		packets_count(handle, channel_ID, pdu_len, 0, pp);
-	//}
 }
 
-static void polling_bt_info(unsigned long data)
+static void polling_bt_info(struct timer_list *t)
 {
 	uint8_t temp_cmd[1];
 	RTKBT_DBG("polling timer");
@@ -2313,7 +2253,7 @@ static void rtk_handle_bt_info_control(uint8_t *p)
 
 	if (ctl->polling_enable && !btrtl_coex.polling_enable) {
 		/* setup polling timer for getting bt info from firmware */
-		setup_timer(&(btrtl_coex.polling_timer), polling_bt_info, 0);
+		timer_setup(&(btrtl_coex.polling_timer), polling_bt_info, 0);
 		btrtl_coex.polling_timer.expires =
 		    jiffies + msecs_to_jiffies(ctl->polling_time * 1000);
 		add_timer(&(btrtl_coex.polling_timer));
@@ -2528,11 +2468,6 @@ void rtk_btcoex_open(struct hci_dev *hdev)
 	INIT_DELAYED_WORK(&btrtl_coex.sock_work,
 			  (void *)udpsocket_recv_data);
 	INIT_DELAYED_WORK(&btrtl_coex.l2_work, (void *)rtl_l2_work);
-
-	init_timer(&btrtl_coex.polling_timer);
-	init_timer(&btrtl_coex.a2dp_count_timer);
-	init_timer(&btrtl_coex.pan_count_timer);
-	init_timer(&btrtl_coex.hogp_count_timer);
 
 	btrtl_coex.hdev = hdev;
 	btrtl_coex.wifi_on = 0;

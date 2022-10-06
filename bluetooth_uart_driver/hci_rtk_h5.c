@@ -67,7 +67,9 @@ struct h5_struct {
 	struct sk_buff *rx_skb;
 	u8 rxseq_txack;		/* rxseq == txack. */
 	u8 rxack;		/* Last packet sent by us that the peer ack'ed */
-	struct timer_list th5;
+
+	struct timer_list 	th5;
+	struct hci_uart 	*hu;
 
 	enum {
 		H5_W4_PKT_DELIMITER,
@@ -761,7 +763,7 @@ static int h5_recv(struct hci_uart *hu, void *data, int count)
 				H5_CRC_INIT(h5->message_crc);
 
 				/* Do not increment ptr or decrement count
-				 * Allocate packet. Max len of a H5 pkt= 
+				 * Allocate packet. Max len of a H5 pkt=
 				 * 0xFFF (payload) +4 (header) +2 (crc) */
 
 				h5->rx_skb = bt_skb_alloc(0x1005, GFP_ATOMIC);
@@ -782,10 +784,10 @@ static int h5_recv(struct hci_uart *hu, void *data, int count)
 }
 
 /* Arrange to retransmit all messages in the relq. */
-static void h5_timed_event(unsigned long arg)
+static void h5_timed_event(struct timer_list *t)
 {
-	struct hci_uart *hu = (struct hci_uart *)arg;
-	struct h5_struct *h5 = hu->priv;
+	struct h5_struct *h5 = from_timer(h5, t, th5);
+	struct hci_uart *hu = h5->hu;
 	struct sk_buff *skb;
 	unsigned long flags;
 
@@ -815,13 +817,13 @@ static int h5_open(struct hci_uart *hu)
 		return -ENOMEM;
 
 	hu->priv = h5;
+	h5->hu = hu;
+
 	skb_queue_head_init(&h5->unack);
 	skb_queue_head_init(&h5->rel);
 	skb_queue_head_init(&h5->unrel);
 
-	init_timer(&h5->th5);
-	h5->th5.function = h5_timed_event;
-	h5->th5.data = (u_long) hu;
+	timer_setup(&h5->th5, h5_timed_event, 0);
 
 	h5->rx_state = H5_W4_PKT_DELIMITER;
 

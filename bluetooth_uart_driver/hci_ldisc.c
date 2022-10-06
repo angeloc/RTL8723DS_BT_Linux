@@ -61,6 +61,7 @@ static int reset = 0;
 #endif
 
 static struct hci_uart_proto *hup[HCI_UART_MAX_PROTO];
+static struct tty_ldisc_ops hci_uart_ldisc;
 
 int hci_uart_register_proto(struct hci_uart_proto *p)
 {
@@ -479,8 +480,8 @@ static void hci_uart_tty_wakeup(struct tty_struct *tty)
  *
  * Return Value:    None
  */
-static void hci_uart_tty_receive(struct tty_struct *tty, const u8 * data,
-				 char *flags, int count)
+static void hci_uart_tty_receive(struct tty_struct *tty,
+		const unsigned char * data, const char * flags, int count)
 {
 	struct hci_uart *hu = (void *)tty->disc_data;
 
@@ -587,7 +588,7 @@ static int hci_uart_register_dev(struct hci_uart *hu)
 	if (test_bit(HCI_UART_CREATE_AMP, &hu->hdev_flags))
 		hdev->dev_type = HCI_AMP;
 	else
-		hdev->dev_type = HCI_BREDR;
+		hdev->dev_type = HCI_PRIMARY;
 #endif
 
 	if (hci_register_dev(hdev) < 0) {
@@ -663,8 +664,13 @@ static int hci_uart_set_flags(struct hci_uart *hu, unsigned long flags)
  *
  * Return Value:    Command dependent
  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
 static int hci_uart_tty_ioctl(struct tty_struct *tty, struct file *file,
 			      unsigned int cmd, unsigned long arg)
+#else
+static int hci_uart_tty_ioctl(struct tty_struct *tty,
+			      unsigned int cmd, unsigned long arg)
+#endif
 {
 	struct hci_uart *hu = (void *)tty->disc_data;
 	int err = 0;
@@ -713,7 +719,11 @@ static int hci_uart_tty_ioctl(struct tty_struct *tty, struct file *file,
 		return hu->hdev_flags;
 
 	default:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
 		err = n_tty_ioctl_helper(tty, file, cmd, arg);
+#else
+		err = n_tty_ioctl_helper(tty, cmd, arg);
+#endif
 		break;
 	};
 
@@ -724,7 +734,8 @@ static int hci_uart_tty_ioctl(struct tty_struct *tty, struct file *file,
  * We don't provide read/write/poll interface for user space.
  */
 static ssize_t hci_uart_tty_read(struct tty_struct *tty, struct file *file,
-				 unsigned char __user * buf, size_t nr)
+				 unsigned char __user * buf, size_t nr,
+				 void **cookie, unsigned long offset)
 {
 	return 0;
 }
@@ -743,7 +754,6 @@ static unsigned int hci_uart_tty_poll(struct tty_struct *tty,
 
 static int __init hci_uart_init(void)
 {
-	static struct tty_ldisc_ops hci_uart_ldisc;
 	int err;
 
 	BT_INFO("HCI UART driver ver %s", VERSION);
@@ -751,7 +761,6 @@ static int __init hci_uart_init(void)
 	/* Register the tty discipline */
 
 	memset(&hci_uart_ldisc, 0, sizeof(hci_uart_ldisc));
-	hci_uart_ldisc.magic = TTY_LDISC_MAGIC;
 	hci_uart_ldisc.name = "n_hci";
 	hci_uart_ldisc.open = hci_uart_tty_open;
 	hci_uart_ldisc.close = hci_uart_tty_close;
@@ -763,7 +772,7 @@ static int __init hci_uart_init(void)
 	hci_uart_ldisc.write_wakeup = hci_uart_tty_wakeup;
 	hci_uart_ldisc.owner = THIS_MODULE;
 
-	if ((err = tty_register_ldisc(N_HCI, &hci_uart_ldisc))) {
+	if ((err = tty_register_ldisc(&hci_uart_ldisc))) {
 		BT_ERR("HCI line discipline registration failed. (%d)", err);
 		return err;
 	}
@@ -782,7 +791,6 @@ static int __init hci_uart_init(void)
 
 static void __exit hci_uart_exit(void)
 {
-	int err;
 
 #ifdef CONFIG_BT_HCIUART_H4
 	h4_deinit();
@@ -790,8 +798,7 @@ static void __exit hci_uart_exit(void)
 	h5_deinit();
 
 	/* Release tty registration of line discipline */
-	if ((err = tty_unregister_ldisc(N_HCI)))
-		BT_ERR("Can't unregister HCI line discipline (%d)", err);
+	tty_unregister_ldisc(&hci_uart_ldisc);
 
 #ifdef BTCOEX
 	rtk_btcoex_exit();
